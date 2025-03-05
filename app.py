@@ -409,7 +409,7 @@ Renvoie un JSON sous cette forme :
                     st.dataframe(mapped_summary)
                     
                     # Forcer le rechargement de la page
-                    st.experimental_rerun()
+                    st.rerun()
                     
                 except json.JSONDecodeError:
                     st.error("❌ Format JSON invalide. Vérifiez la réponse de ChatGPT.")
@@ -583,11 +583,11 @@ Renvoie un JSON sous cette forme :
                 else:
                     st.success("✅ Aucune erreur de format détectée !")
 
-    # Si tous les fichiers ont été mappés, afficher le bouton de concaténation
-    if len(st.session_state.mapped_dfs) == len(uploaded_files):
-        st.markdown("### 🔄 Concaténation des fichiers")
-        if st.button("✨ Concaténer les fichiers mappés"):
-            # Concaténer tous les DataFrames mappés
+    # Si au moins un fichier a été mappé, afficher le bouton de concaténation
+    if len(st.session_state.mapped_dfs) > 0:
+        st.markdown("### 🔄 Génération du fichier final")
+        if st.button("✨ Générer le fichier final"):
+            # Concaténer tous les DataFrames mappés (même s'il n'y en a qu'un)
             final_df = pd.concat(st.session_state.mapped_dfs.values(), ignore_index=True)
             
             # Afficher un aperçu du fichier final
