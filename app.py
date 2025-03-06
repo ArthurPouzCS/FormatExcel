@@ -18,7 +18,7 @@ def load_ced_codes():
     ced_codes = set()
     try:
         # Utiliser le chemin parent pour trouver le fichier
-        parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        parent_dir = os.path.dirname(os.path.abspath(__file__))
         ced_file_path = os.path.join(parent_dir, "codes_ced.txt")
         
         with open(ced_file_path, "r", encoding="utf-8") as f:
