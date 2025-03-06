@@ -3,6 +3,53 @@ import pandas as pd
 import re
 import datetime
 import json
+import os
+
+# Configuration de la page en mode wide
+st.set_page_config(layout="wide")
+
+# Désactiver le cache
+st.set_option('deprecation.showPyplotGlobalUse', False)
+st.cache_data.clear()
+
+# Charger les codes CED de référence
+def load_ced_codes():
+    """Charge les codes CED de référence depuis le fichier codes_ced.txt"""
+    ced_codes = set()
+    try:
+        # Utiliser le chemin parent pour trouver le fichier
+        parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        ced_file_path = os.path.join(parent_dir, "codes_ced.txt")
+        
+        with open(ced_file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                # Nettoyer la ligne et ajouter au set
+                code = line.strip()
+                if code:  # Ignorer les lignes vides
+                    ced_codes.add(code)
+    except Exception as e:
+        st.error(f"Erreur lors du chargement des codes CED : {str(e)}")
+    return ced_codes
+
+def format_ced_code(code):
+    """Formate un code CED en utilisant la référence"""
+    if pd.isna(code):
+        return ""
+    
+    # Convertir en string et nettoyer
+    code = str(code).strip()
+    # Enlever tous les espaces et astérisques
+    clean_code = code.replace(" ", "").replace("*", "")
+    
+    # Chercher le code correspondant dans la référence
+    for ref_code in CED_CODES:
+        if ref_code.replace(" ", "").replace("*", "") == clean_code:
+            return ref_code
+    
+    return code  # Retourner le code original si pas de correspondance trouvée
+
+# Charger les codes CED au démarrage
+CED_CODES = load_ced_codes()
 
 # --- 1. Définition des colonnes cibles et leurs validateurs ---
 # Définition des catégories et leurs colonnes
@@ -11,23 +58,12 @@ COLUMN_CATEGORIES = {
         'nomSiteEmetteur',
         'siretEmetteur',
         'adresseEmetteur',
-        'codePostalEmetteur',
-        'communeEmetteur',
-        'paysEmetteur',
-        'prenomContactEmetteur',
-        'nomContactEmetteur',
-        'telephoneContactEmetteur',
         'emailContactEmetteur',
         'nomPointCollecte',
         'adresseCollecte',
-        'codePostalCollecte',
-        'communeCollecte',
-        'infosCollecte'
         'nomInstallationDestination',
         'siretInstallationDestination',
         'adresseInstallationDestination',
-        'codePostalInstallationDestination',
-        'communeInstallationDestination',
         'numeroCap',
         'codeTraitementPrevuInstallationDestination'
     ],
@@ -35,8 +71,6 @@ COLUMN_CATEGORIES = {
         'nomTransporteur',
         'siretTransporteur',
         'adresseTransporteur',
-        'codePostalTransporteur',
-        'communeTransporteur',
         'recepisseTransporteur',
         'dateCollecteTransporteur',
         'codeCed',
@@ -46,13 +80,10 @@ COLUMN_CATEGORIES = {
         'quantiteCollecteTransporteur'
     ],
     "InfosBSD3": [
-        'mentionAdr',
         'pop',
-        'isDangerous'
     ],
     "InfosNonTrackdechets": [
         'descContenant',
-        'typeContenant',
         'volumeUnitaire',
         'uniteMesureVolume'
     ],
@@ -62,14 +93,6 @@ COLUMN_CATEGORIES = {
         'coutsTraitementHT',
         'coutGlobal',
         'rachatTotalHT',
-        'equivalentCoutsContenantsHT',
-        'coutsMiseDispo',
-        'coutsMaintenance',
-        'coutsContenantAutres',
-        'autresCoutsHT',
-        'coutsNonExpliques',
-        'coutsPenalites',
-        'coutsDeclassement',
         'coutsTGAP',
         'montantTotalHT'
     ]
@@ -94,17 +117,25 @@ def validate_siret(value):
     """Valide un numéro SIRET"""
     if pd.isna(value):
         return True
+    # Convertir en string et nettoyer
     value = str(value).strip()
+    # Garder uniquement les chiffres
     value = ''.join(filter(str.isdigit, value))
+    # Vérifier la longueur
     return len(value) == 14
 
 def format_siret(value):
-    """Formate un SIRET en string de 14 chiffres"""
+    """Formate un SIRET en string de 14 chiffres en préservant les zéros"""
     if pd.isna(value):
         return ''
+    # Convertir en string et nettoyer
     value = str(value).strip()
+    # Garder uniquement les chiffres
     value = ''.join(filter(str.isdigit, value))
-    return value if len(value) == 14 else ''
+    # Vérifier la longueur
+    if len(value) == 14:
+        return value
+    return ''
 
 def validate_number(value):
     """Valide si la valeur peut être convertie en nombre"""
@@ -336,7 +367,11 @@ if uploaded_files:
             
             # Charger le fichier si pas déjà fait
             if i not in st.session_state.dfs:
-                st.session_state.dfs[i] = pd.read_excel(uploaded_file)
+                # Lire le fichier Excel en forçant le format texte pour toutes les colonnes
+                st.session_state.dfs[i] = pd.read_excel(
+                    uploaded_file,
+                    dtype=str  # Force toutes les colonnes en format texte
+                )
                 st.write("✅ Fichier chargé avec succès !")
 
             # Afficher les colonnes originales
@@ -348,15 +383,21 @@ if uploaded_files:
             st.subheader("🔄 Mapping des colonnes")
             
             # Générer le prompt pour ChatGPT
-            # Filtrer les colonnes Unnamed
-            filtered_columns = [col for col in original_columns if not str(col).startswith('Unnamed:')]
-            prompt = f"""Fais le mapping entre les colonnes de ces deux fichiers Excel de déchets.
+            original_columns = st.session_state.dfs[i].columns.tolist()
+            prompt = f"""Fais le mapping entre les colonnes de ces deux fichiers Excel de déchets. Attention n'essaie pas de tout mapper, seulement les colonnes qui ont un sens.
 
 Colonnes cibles à mapper :
 {', '.join(TARGET_COLUMNS)}
 
+Synonymes importants à considérer :
+- codeCed : peut aussi être nommé "nomenclature dechet", "code déchet", "code nomenclature"
+- quantiteCollecteTransporteur : peut aussi être nommé "quantité de déchet en tonne", "quantité en t", "quantité en kg", "tonnage", "poids"
+- descDechet : peut aussi être nommé "désignation", "nom du déchet", "description déchet", "type de déchet"
+- codeTraitementPrevuInstallationDestination : peut aussi être nommé "code D/R", "code traitement", "code valorisation", "type de traitement"
+- nomInstallationDestination : peut aussi être nommé "entreposage", "destination", "site de traitement", "installation de traitement", "centre de traitement"
+
 Colonnes sources disponibles :
-{', '.join(filtered_columns)}
+{', '.join(original_columns)}
 
 Colonnes obligatoires :
 {', '.join(REQUIRED_COLUMNS)}
@@ -475,6 +516,12 @@ Renvoie un JSON sous cette forme :
                             st.session_state.column_mappings[i][source_col] = target_col
                             # Mettre à jour le sélecteur dans la session state
                             st.session_state.selectors[f"{i}_{source_col}"] = selected_target
+                        else:
+                            # Si aucune valeur n'est sélectionnée, supprimer le mapping
+                            if i in st.session_state.column_mappings and source_col in st.session_state.column_mappings[i]:
+                                del st.session_state.column_mappings[i][source_col]
+                            # Mettre à jour le sélecteur dans la session state
+                            st.session_state.selectors[f"{i}_{source_col}"] = ""
 
             # Bouton pour valider le mapping de ce fichier
             if st.button("✨ Valider le mapping", key=f"validate_{i}"):
@@ -493,23 +540,27 @@ Renvoie un JSON sous cette forme :
                 
                 # Remplir les colonnes mappées avec formatage
                 for source_col, target_col in st.session_state.column_mappings[i].items():
-                    if target_col in ['siretEmetteur', 'siretInstallationDestination', 'siretTransporteur']:
-                        df_mapped[target_col] = st.session_state.dfs[i][source_col].apply(format_siret)
-                    elif target_col in ['dateCollecteTransporteur']:
-                        df_mapped[target_col] = st.session_state.dfs[i][source_col].apply(format_date)
-                    elif target_col in ['quantiteCollecteTransporteur']:
-                        df_mapped[target_col] = st.session_state.dfs[i][source_col].apply(format_number)
-                    elif target_col == 'mentionAdr':
-                        df_mapped[target_col] = st.session_state.dfs[i][source_col].fillna('').astype(str)
-                        df_mapped['isSubjectToADR'] = df_mapped[target_col] == 'ADR'
-                    elif target_col == 'pop':
-                        df_mapped[target_col] = st.session_state.dfs[i][source_col].fillna('').astype(str)
-                        df_mapped['pop'] = df_mapped[target_col] == 'O'
-                    elif target_col == 'codeCed':
-                        df_mapped[target_col] = st.session_state.dfs[i][source_col].fillna('').astype(str)
-                        df_mapped['isDangerous'] = df_mapped[target_col].str.contains('*', regex=False)
+                    # Copier les données brutes sans formatage
+                    df_mapped[target_col] = st.session_state.dfs[i][source_col]
+                    
+                    # Formatage spécial pour le code CED
+                    if target_col == 'codeCed':
+                        df_mapped[target_col] = df_mapped[target_col].apply(format_ced_code)
+                    
+                    # Remplacer les NaN selon le type de colonne
+                    if target_col in ['quantiteCollecteTransporteur', 'volumeUnitaire']:
+                        # Pour les quantités, remplacer NaN par "0"
+                        df_mapped[target_col] = df_mapped[target_col].fillna("0")
+                    elif target_col in ['coutsPreparationHT', 'coutsTransportHT', 'coutsTraitementHT', 'coutGlobal', 
+                                     'rachatTotalHT', 'equivalentCoutsContenantsHT', 'coutsMiseDispo', 
+                                     'coutsMaintenance', 'coutsContenantAutres', 'autresCoutsHT', 
+                                     'coutsNonExpliques', 'coutsPenalites', 'coutsDeclassement', 
+                                     'coutsTGAP', 'montantTotalHT']:
+                        # Pour les coûts, remplacer NaN par "0"
+                        df_mapped[target_col] = df_mapped[target_col].fillna("0")
                     else:
-                        df_mapped[target_col] = st.session_state.dfs[i][source_col].fillna('').astype(str)
+                        # Pour toutes les autres colonnes, remplacer NaN par une chaîne vide
+                        df_mapped[target_col] = df_mapped[target_col].fillna("")
                 
                 # Stocker le DataFrame mappé
                 st.session_state.mapped_dfs[i] = df_mapped
@@ -521,6 +572,29 @@ Renvoie un JSON sous cette forme :
                 mapped_columns = set(st.session_state.column_mappings[i].values())
                 df_mapped_preview = df_mapped[list(mapped_columns)]
                 st.write(df_mapped_preview.head())
+
+                # Afficher le tableau de mapping explicatif
+                st.subheader("🔄 Tableau de mapping")
+                mapping_explanation = []
+                for source_col, target_col in st.session_state.column_mappings[i].items():
+                    # Déterminer la catégorie de la colonne cible
+                    category = "Autre"
+                    for cat, cols in COLUMN_CATEGORIES.items():
+                        if target_col in cols:
+                            category = cat
+                            break
+                    
+                    # Ajouter une ligne au tableau
+                    mapping_explanation.append({
+                        "Colonne source": source_col,
+                        "Colonne cible": target_col,
+                        "Catégorie": category,
+                        "Obligatoire": "Oui" if target_col in REQUIRED_COLUMNS else "Non"
+                    })
+                
+                # Créer et afficher le DataFrame de mapping avec des colonnes plus larges
+                mapping_df = pd.DataFrame(mapping_explanation)
+                st.dataframe(mapping_df, use_container_width=True, height=400)
 
                 # Validation des données
                 st.subheader("🔍 Validation des données")
@@ -564,24 +638,25 @@ Renvoie un JSON sous cette forme :
                     if nb_invalides > 0:
                         format_errors[target_col] = df_mapped[~is_valid][target_col].tolist()
                 
-                # Affichage du tableau récapitulatif des validations
+                # Affichage du tableau récapitulatif des validations avec des colonnes plus larges
                 if validation_summary:
                     st.write("📊 Tableau récapitulatif des validations :")
-                    st.table(pd.DataFrame(validation_summary))
+                    validation_df = pd.DataFrame(validation_summary)
+                    st.dataframe(validation_df, use_container_width=True, height=400)
                 
-                # Affichage des erreurs détaillées
+                # Affichage des erreurs détaillées avec des colonnes plus larges
                 if format_errors:
                     st.error("❌ Détail des erreurs de format :")
                     for col, values in format_errors.items():
                         with st.expander(f"🔴 {col} - {len(values)} erreurs"):
                             st.write("Valeurs incorrectes :")
-                            st.write(values)
+                            errors_df = pd.DataFrame({"Valeurs incorrectes": values})
+                            st.dataframe(errors_df, use_container_width=True, height=200)
                             if col in df_mapped.columns:
                                 st.write("Exemples de valeurs valides :")
                                 valid_examples = df_mapped[~df_mapped[col].isna()][col].head()
-                                st.write(valid_examples.tolist())
-                else:
-                    st.success("✅ Aucune erreur de format détectée !")
+                                valid_df = pd.DataFrame({"Valeurs valides": valid_examples.tolist()})
+                                st.dataframe(valid_df, use_container_width=True, height=100)
 
     # Si au moins un fichier a été mappé, afficher le bouton de concaténation
     if len(st.session_state.mapped_dfs) > 0:
@@ -593,6 +668,22 @@ Renvoie un JSON sous cette forme :
             # Afficher un aperçu du fichier final
             st.subheader("📌 Aperçu du fichier final :")
             st.write(final_df.head())
+            
+            # Afficher les points de jointure entre les fichiers
+            if len(st.session_state.mapped_dfs) > 1:
+                st.subheader("🔍 Points de jointure entre les fichiers :")
+                current_row = 0
+                for i, df in enumerate(st.session_state.mapped_dfs.values()):
+                    if i > 0:  # Ne pas afficher pour le premier fichier
+                        st.markdown(f"### Jointure entre le fichier {i} et {i+1}")
+                        # Afficher les 3 dernières lignes du fichier précédent
+                        st.write("3 dernières lignes du fichier précédent :")
+                        st.write(final_df.iloc[current_row-3:current_row])
+                        # Afficher les 3 premières lignes du fichier actuel
+                        st.write("3 premières lignes du fichier actuel :")
+                        st.write(final_df.iloc[current_row:current_row+3])
+                        st.markdown("---")
+                    current_row += len(df)
             
             # Afficher les statistiques
             st.subheader("📊 Statistiques du fichier final :")
